@@ -1,8 +1,20 @@
 let listsData = [];
 let observerInstance = null;
 
-const EMAIL_SELECTOR = '.etr__email-text, .long-email-width';
-const EMAIL_SELECTOR_UNPROCESSED = '.etr__email-text:not([data-colored="true"]), .long-email-width:not([data-colored="true"])';
+// Snov.io использует разные селекторы на разных страницах:
+// - .etr__email-text                       — All Domain Emails (.et__table)
+// - .row__cell--email .pe__text-ellipsis   — Prospects (.pt__table)
+// - .long-email-width                      — старый/легаси интерфейс
+const EMAIL_SELECTORS = [
+    '.etr__email-text',
+    '.row__cell--email .pe__text-ellipsis',
+    '.long-email-width'
+];
+
+const EMAIL_SELECTOR = EMAIL_SELECTORS.join(', ');
+const EMAIL_SELECTOR_UNPROCESSED = EMAIL_SELECTORS
+    .map(s => `${s}:not([data-colored="true"])`)
+    .join(', ');
 
 /**
  * Loads config from storage and rebuilds listsData Sets.
@@ -46,7 +58,6 @@ function processElement(el) {
 
 /**
  * Scans the document for unprocessed email elements.
- * Used on initial load and after config reload.
  */
 function highlightAll() {
     document.querySelectorAll(EMAIL_SELECTOR_UNPROCESSED)
@@ -54,58 +65,52 @@ function highlightAll() {
 }
 
 /**
- * Processes only newly added nodes from a MutationObserver batch.
- * Much cheaper than a full DOM scan on every mutation.
- * @param {MutationRecord[]} mutations
+ * Processes a MutationObserver batch.
+ * Always re-scans the full document because Snov.io is an SPA:
+ * navigating between Prospects / All Domain Emails replaces large
+ * subtrees, and per-node matching can miss deeply nested emails.
+ * The :not([data-colored]) filter keeps this cheap on repeated calls.
  */
-function processMutations(mutations) {
-    for (const mutation of mutations) {
-        for (const node of mutation.addedNodes) {
-            if (node.nodeType !== Node.ELEMENT_NODE) continue;
-
-            // Check the node itself
-            if (node.matches?.(EMAIL_SELECTOR_UNPROCESSED)) {
-                processElement(node);
-            }
-            // Check descendants
-            node.querySelectorAll?.(EMAIL_SELECTOR_UNPROCESSED)
-                .forEach(processElement);
-        }
-    }
+function processMutations() {
+    highlightAll();
 }
 
 /**
  * Starts (or restarts) the MutationObserver.
+ * Observes document.body so SPA route changes don't break tracking.
  */
 function initObserver() {
     if (observerInstance) {
         observerInstance.disconnect();
     }
 
-    // Prefer a stable container over document.body for lower overhead.
-    // Added new Snov.io containers: .et__table (emails table), .companies__content.
-    const root = document.querySelector(
-        '.et__table, .companies__content, .contacts-list, .leads-table, main'
-    ) || document.body;
+    observerInstance = new MutationObserver(processMutations);
 
-    observerInstance = new MutationObserver(mutations => {
-        processMutations(mutations);
-    });
-
-    observerInstance.observe(root, {
+    observerInstance.observe(document.body, {
         childList: true,
         subtree: true
-        // No characterData — we don't need text change events
     });
 }
 
 // ── Init ─────────────────────────────────────────────────────────────────────
 
-chrome.storage.local.get(['config'], result => {
-    buildListsData(result.config);
-    highlightAll();
-    initObserver();
-});
+function init() {
+    chrome.storage.local.get(['config'], result => {
+        buildListsData(result.config);
+        highlightAll();
+        initObserver();
+    });
+}
+
+if (document.body) {
+    init();
+} else {
+    document.addEventListener('DOMContentLoaded', init, { once: true });
+}
+
+// Safety net: re-scan every 2s in case mutations were missed
+// (e.g., heavy virtualized lists). Cheap due to :not([data-colored]) filter.
+setInterval(highlightAll, 2000);
 
 // ── Live reload when background updates the databases ─────────────────────────
 
@@ -115,16 +120,15 @@ chrome.runtime.onMessage.addListener((request) => {
             buildListsData(result.config);
 
             // Reset already-marked elements so they get re-evaluated
-            document.querySelectorAll(`${EMAIL_SELECTOR}[data-colored="true"]`)
-                .forEach(el => {
-                    el.dataset.colored = '';
-                    // Clear previous inline highlight
-                    el.style.backgroundColor = '';
-                    el.style.color = '';
-                    el.style.fontWeight = '';
-                    el.style.padding = '';
-                    el.style.borderRadius = '';
-                });
+            document.querySelectorAll(EMAIL_SELECTOR).forEach(el => {
+                if (el.dataset.colored !== 'true') return;
+                el.dataset.colored = '';
+                el.style.backgroundColor = '';
+                el.style.color = '';
+                el.style.fontWeight = '';
+                el.style.padding = '';
+                el.style.borderRadius = '';
+            });
 
             highlightAll();
         });
