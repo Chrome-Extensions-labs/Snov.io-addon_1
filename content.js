@@ -1,6 +1,9 @@
 let listsData = [];
 let observerInstance = null;
 
+const EMAIL_SELECTOR = '.etr__email-text, .long-email-width';
+const EMAIL_SELECTOR_UNPROCESSED = '.etr__email-text:not([data-colored="true"]), .long-email-width:not([data-colored="true"])';
+
 /**
  * Loads config from storage and rebuilds listsData Sets.
  * @param {object} config
@@ -46,7 +49,7 @@ function processElement(el) {
  * Used on initial load and after config reload.
  */
 function highlightAll() {
-    document.querySelectorAll('.long-email-width:not([data-colored="true"])')
+    document.querySelectorAll(EMAIL_SELECTOR_UNPROCESSED)
         .forEach(processElement);
 }
 
@@ -61,11 +64,11 @@ function processMutations(mutations) {
             if (node.nodeType !== Node.ELEMENT_NODE) continue;
 
             // Check the node itself
-            if (node.matches?.('.long-email-width:not([data-colored="true"])')) {
+            if (node.matches?.(EMAIL_SELECTOR_UNPROCESSED)) {
                 processElement(node);
             }
             // Check descendants
-            node.querySelectorAll?.('.long-email-width:not([data-colored="true"])')
+            node.querySelectorAll?.(EMAIL_SELECTOR_UNPROCESSED)
                 .forEach(processElement);
         }
     }
@@ -79,8 +82,11 @@ function initObserver() {
         observerInstance.disconnect();
     }
 
-    // Prefer a stable container over document.body for lower overhead
-    const root = document.querySelector('.contacts-list, .leads-table, main') || document.body;
+    // Prefer a stable container over document.body for lower overhead.
+    // Added new Snov.io containers: .et__table (emails table), .companies__content.
+    const root = document.querySelector(
+        '.et__table, .companies__content, .contacts-list, .leads-table, main'
+    ) || document.body;
 
     observerInstance = new MutationObserver(mutations => {
         processMutations(mutations);
@@ -109,7 +115,7 @@ chrome.runtime.onMessage.addListener((request) => {
             buildListsData(result.config);
 
             // Reset already-marked elements so they get re-evaluated
-            document.querySelectorAll('.long-email-width[data-colored="true"]')
+            document.querySelectorAll(`${EMAIL_SELECTOR}[data-colored="true"]`)
                 .forEach(el => {
                     el.dataset.colored = '';
                     // Clear previous inline highlight
